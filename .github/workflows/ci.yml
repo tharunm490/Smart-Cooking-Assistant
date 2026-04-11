@@ -2,9 +2,11 @@ name: Smart Cooking Assistant CI
 
 on:
   push:
+    branches:
+      - "main"
   pull_request:
     branches:
-      - "Agile_version02"
+      - "main"
 
 jobs:
   backend-unit-tests:
