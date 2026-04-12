@@ -62,29 +62,36 @@ OUTPUT REQUIREMENT:
 - Ensure nutrition output reflects the modifications
 """
 
-PROMPT_TEMPLATE = """Generate a realistic Indian recipe.
+PROMPT_TEMPLATE = """Generate a recipe only from the available ingredients and user request.
 
-User ingredients: {ingredients}
+Available ingredients: {ingredients}
 User requested dish: {requested_dish}
-Preferences: {preferences}
-User health goals: {health_goals}
+Meal type: {meal_type}
+Diet: {diet}
+Health goals: {health_goals}
+Servings: {servings}
 
 Rules:
 
-* Prioritize requested dish strictly when provided
-* Never change dish category (example: dosa must remain dosa)
-* Add missing essential ingredients
-* Include realistic measurements
-* Provide detailed steps
-* Adjust based on age group and health goal
-* Mention missing ingredients separately as extra_ingredients
-* Recipe must follow authentic Indian culinary techniques where applicable
+* Treat only the available ingredients as already on hand.
+* Never assume salt, oil, or spices are already available unless explicitly provided.
+* Respect the selected diet.
+* Veg: no meat, fish, poultry, eggs, or seafood.
+* Vegan: no meat, fish, poultry, eggs, seafood, dairy, ghee, butter, paneer, cheese, curd, yogurt, cream, or whey.
+* Keep Jain/diabetic/health goals aligned with low oil, low sugar, and low salt when requested.
+* Any ingredient not in the available ingredients must be listed under extra_ingredients.
+* The recipe must include realistic measurements and Indian cooking steps.
+* Return the exact output fields requested below.
 
-Return STRICT JSON format:
+Return STRICT JSON only with this schema:
 {{
     "recipe_name": "string",
+    "diet": "veg|non-veg|vegan",
+    "diet_label": "Veg|Non-Veg|Vegan",
+    "available_ingredients": ["string"],
     "input_ingredients": ["string"],
     "matched_ingredients": ["string"],
+    "missing_ingredients": ["string"],
     "extra_ingredients": ["string"],
     "ingredients_with_measurements": [
         {{"ingredient": "string", "measurement": "string"}}
@@ -105,8 +112,6 @@ Return STRICT JSON format:
         "fat": "string"
     }}
 }}
-
-Return JSON only. No markdown fences.
 """
 
 STRICT_REALISM_RULES = """
@@ -192,6 +197,65 @@ VALIDATION:
 """
 
 ALLOWED_LANGUAGES = {"en", "hi", "ta", "te", "kn"}
+
+DIET_LABELS = {
+    "veg": "Veg",
+    "non-veg": "Non-Veg",
+    "vegan": "Vegan",
+}
+
+DIET_BLOCKLIST = {
+    "veg": {
+        "chicken", "fish", "mutton", "egg", "eggs", "prawn", "prawns", "crab",
+        "meat", "beef", "pork", "lamb", "duck", "goat", "seafood",
+    },
+    "vegan": {
+        "chicken", "fish", "mutton", "egg", "eggs", "prawn", "prawns", "crab",
+        "meat", "beef", "pork", "lamb", "duck", "goat", "seafood",
+        "milk", "curd", "paneer", "butter", "ghee", "cheese", "yogurt", "cream", "whey", "khoya",
+    },
+}
+
+
+def normalize_diet_value(diet: str) -> str:
+    normalized = str(diet or "").strip().lower().replace("_", "-")
+    if normalized in {"nonveg", "non veg"}:
+        return "non-veg"
+    if normalized in {"veg", "vegetarian"}:
+        return "veg"
+    if normalized in {"vegan"}:
+        return "vegan"
+    return normalized or "veg"
+
+
+def diet_label_for_value(diet: str) -> str:
+    return DIET_LABELS.get(normalize_diet_value(diet), str(diet or "").strip().title() or "Veg")
+
+
+def _contains_whole_term(text: str, term: str) -> bool:
+    if not text or not term:
+        return False
+    pattern = rf"\b{re.escape(term)}\b"
+    return re.search(pattern, text) is not None
+
+
+def validate_diet_request(diet: str, ingredients: list[str], user_text: str = "", dish_name: str = "") -> str | None:
+    normalized_diet = normalize_diet_value(diet)
+    blocked_terms = DIET_BLOCKLIST.get(normalized_diet, set())
+    if not blocked_terms:
+        return None
+
+    combined_text = " ".join([
+        " ".join(normalize_text_list(ingredients)),
+        str(user_text or "").lower(),
+        str(dish_name or "").lower(),
+    ])
+
+    if any(_contains_whole_term(combined_text, term) for term in blocked_terms):
+        if normalized_diet == "vegan":
+            return "❌ Selected Vegan diet does not allow dairy or animal products."
+        return "❌ Selected diet is Veg, but requested dish contains Non-Veg ingredients. Please change diet preference."
+    return None
 
 DISH_ALIAS_MAP: dict[str, list[str]] = {
     "tomato bath": ["tomato bath", "tomato rice"],
@@ -406,6 +470,41 @@ class RecipeGenerator:
                 return value
         return ""
 
+    def _row_is_diet_compliant(self, row: dict[str, str], diet: str) -> bool:
+        normalized_diet = normalize_diet_value(diet)
+        blocked_terms = DIET_BLOCKLIST.get(normalized_diet, set())
+        if not blocked_terms:
+            return True
+
+        searchable_blob = " ".join([
+            self._row_title(row),
+            str(row.get("Cleaned-Ingredients", "")).lower(),
+            str(row.get("TranslatedIngredients", "")).lower(),
+        ])
+        return not any(_contains_whole_term(searchable_blob, term) for term in blocked_terms)
+
+    def _apply_diet_to_rows(
+        self,
+        rows: list[dict[str, str]],
+        full_ingredients: list[str],
+        preferences: RecipePreferences,
+    ) -> tuple[list[dict[str, str]], list[str]]:
+        normalized_diet = normalize_diet_value(preferences.diet)
+        blocked_terms = DIET_BLOCKLIST.get(normalized_diet, set())
+        if not blocked_terms:
+            return rows, full_ingredients
+
+        def allowed(ingredient: str) -> bool:
+            ingredient_text = ingredient.strip().lower()
+            return not any(_contains_whole_term(ingredient_text, term) for term in blocked_terms)
+
+        filtered_rows = [row for row in rows if allowed(str(row.get("ingredient", "")))]
+        filtered_full = [ingredient for ingredient in full_ingredients if allowed(ingredient)]
+
+        if not filtered_rows:
+            return rows, full_ingredients
+        return filtered_rows, filtered_full
+
     def _extract_user_dish_query(self, preferences: RecipePreferences) -> str:
         explicit = str(preferences.dish_name or "").strip().lower()
         if explicit:
@@ -616,7 +715,7 @@ class RecipeGenerator:
         scored.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
         return scored[0][3]
 
-    def _find_dataset_row(self, dish_name: str, input_ingredients: list[str]) -> tuple[dict[str, str] | None, str]:
+    def _find_dataset_row(self, dish_name: str, input_ingredients: list[str], preferences: RecipePreferences) -> tuple[dict[str, str] | None, str]:
         """PHASE 3-7: Find best recipe from dataset using 9-phase pipeline.
         
         Phases:
@@ -658,6 +757,9 @@ class RecipeGenerator:
         for row in self.dataset_rows:
             title = self._row_title(row)
             if not title:
+                continue
+
+            if not self._row_is_diet_compliant(row, preferences.diet):
                 continue
 
             # PHASE 2: Clean recipe title for accurate matching
@@ -827,7 +929,7 @@ class RecipeGenerator:
 
         dish_query = self._extract_user_dish_query(preferences)
         if dish_query:
-            row, source = self._find_dataset_row(dish_query, ingredients)
+            row, source = self._find_dataset_row(dish_query, ingredients, preferences)
         else:
             # Ingredient-only mode: still prefer dataset over generic fallback/model.
             ranked = self._rank_recipe_candidates(self.dataset_rows, ingredients, [])
@@ -862,18 +964,7 @@ class RecipeGenerator:
             if str(r.get("ingredient", "")).strip()
         ]
 
-        user_set = set(input_ingredients)
-        matched_ingredients = [
-            row_item["ingredient"]
-            for row_item in adjusted_rows
-            if self._ingredient_matches_user_input(row_item["ingredient"], user_set)
-        ]
-        missing_ingredients = [
-            row_item["ingredient"]
-            for row_item in adjusted_rows
-            if row_item["ingredient"] not in set(matched_ingredients)
-        ]
-        extra_ingredients = self._build_extra_ingredient_strings(missing_ingredients, adjusted_rows)
+        adjusted_rows, adjusted_full_ingredients = self._apply_diet_to_rows(adjusted_rows, adjusted_full_ingredients, preferences)
 
         steps = self._steps_from_instructions(row.get("TranslatedInstructions", ""))
         if not steps:
@@ -882,8 +973,16 @@ class RecipeGenerator:
         total_minutes = row.get("TotalTimeInMins", "").strip()
         cooking_time = f"{total_minutes} minutes" if total_minutes.isdigit() else self._estimate_cooking_time(preferences, rows)
 
+        matched_ingredients = normalize_text_list(input_ingredients)
+        matched_set = set(matched_ingredients)
+        missing_ingredients = [row_item["ingredient"] for row_item in adjusted_rows if row_item["ingredient"] not in matched_set]
+        extra_ingredients = self._build_extra_ingredient_strings(missing_ingredients, adjusted_rows)
+
         return {
             "recipe_name": row.get("TranslatedRecipeName", "").strip() or preferences.dish_name.strip(),
+            "diet": normalize_diet_value(preferences.diet),
+            "diet_label": diet_label_for_value(preferences.diet),
+            "available_ingredients": input_ingredients,
             "input_ingredients": input_ingredients,
             "matched_ingredients": matched_ingredients,
             "missing_ingredients": missing_ingredients,
@@ -905,20 +1004,12 @@ class RecipeGenerator:
     def build_prompt(self, ingredients: list[str], preferences: RecipePreferences) -> str:
         clean_ingredients = normalize_text_list(ingredients)
         requested_dish = self._extract_user_dish_query(preferences) or "none"
-        pref_blob = {
-            "meal_type": preferences.meal_type,
-            "diet": preferences.diet,
-            "spice_level": preferences.spice_level,
-            "age_group": preferences.age_group,
-            "health_goals": preferences.health_goals,
-            "servings": preferences.servings,
-            "language": preferences.language,
-            "user_text": preferences.user_text,
-        }
         prompt = (PROMPT_TEMPLATE.format(
             ingredients=", ".join(clean_ingredients) if clean_ingredients else "none",
             requested_dish=requested_dish,
-            preferences=pref_blob,
+            meal_type=preferences.meal_type,
+            diet=diet_label_for_value(preferences.diet),
+            servings=preferences.servings,
             health_goals=", ".join(preferences.health_goals) if preferences.health_goals else "none",
         ) + "\n" + CHEF_RULES_APPENDIX)
 
@@ -997,15 +1088,9 @@ class RecipeGenerator:
         forced_extras: list[str],
         preferences: RecipePreferences,
     ) -> dict[str, Any]:
-        input_ingredients = normalize_text_list(recipe.get("input_ingredients", []))
+        input_ingredients = normalize_text_list(ingredients)
         if not input_ingredients:
-            input_ingredients = self._extract_ingredient_names(recipe.get("ingredients"), ingredients)
-
-        extra_ingredients = normalize_text_list(recipe.get("extra_ingredients", []))
-        extra_ingredients = normalize_text_list(extra_ingredients + forced_extras)
-
-        if not input_ingredients:
-            input_ingredients = ingredients or ["tomato", "onion"]
+            input_ingredients = ["tomato", "onion"]
 
         model_rows = recipe.get("ingredients_with_measurements", [])
         if not model_rows:
@@ -1014,9 +1099,9 @@ class RecipeGenerator:
         rows = self._normalize_ingredient_rows(
             model_rows,
             input_ingredients,
-            extra_ingredients,
+            normalize_text_list(forced_extras),
         )
-        full_ingredients = normalize_text_list([row["ingredient"] for row in rows])
+        rows, full_ingredients = self._apply_diet_to_rows(rows, normalize_text_list([row["ingredient"] for row in rows]), preferences)
         matched_ingredients = [item for item in input_ingredients if item in set(full_ingredients)]
         missing_ingredients = [item for item in full_ingredients if item not in set(matched_ingredients)]
         measured_extras = self._build_extra_ingredient_strings(missing_ingredients, rows)
@@ -1030,6 +1115,9 @@ class RecipeGenerator:
 
         return {
             "recipe_name": str(recipe.get("recipe_name") or self._fallback_name(input_ingredients, preferences)),
+            "diet": normalize_diet_value(preferences.diet),
+            "diet_label": diet_label_for_value(preferences.diet),
+            "available_ingredients": input_ingredients,
             "input_ingredients": input_ingredients,
             "matched_ingredients": matched_ingredients,
             "missing_ingredients": missing_ingredients,
@@ -1305,12 +1393,16 @@ class RecipeGenerator:
     def _fallback_steps(self, preferences: RecipePreferences) -> list[str]:
         meal = preferences.meal_type.lower()
         age = preferences.age_group.lower()
+        vegan = normalize_diet_value(preferences.diet) == "vegan"
+        cooking_fat = "oil" if vegan else "oil or ghee"
 
         if meal == "dessert":
+            fat_line = "Heat 1 tbsp oil in a heavy pan on low flame." if vegan else "Heat 1 tbsp ghee in a heavy pan on low flame."
+            milk_line = "Pour in coconut milk or other plant milk" if vegan else "Pour in milk"
             return [
-                "Heat 1 tbsp ghee in a heavy pan on low flame.",
+                fat_line,
                 "Add the main sweet ingredient and saute for 4 to 5 minutes until aromatic.",
-                "Pour in milk and cook on medium flame until the mixture thickens.",
+                f"{milk_line} and cook on medium flame until the mixture thickens.",
                 "Add sugar or jaggery and stir continuously until glossy.",
                 "Mix in cardamom and chopped nuts, then cook for 1 more minute.",
                 "Serve warm as dessert.",
@@ -1319,7 +1411,7 @@ class RecipeGenerator:
         if meal in {"lunch", "dinner"}:
             spice_note = "Keep spices mild for easy digestion." if age == "elderly" else "Adjust chilli based on spice preference."
             return [
-                "Heat 1 to 2 tbsp oil or ghee in a pan.",
+                f"Heat 1 to 2 tbsp {cooking_fat} in a pan.",
                 "Add chopped onion and saute until translucent.",
                 "Add chopped tomato and cook until soft and pulpy.",
                 "Add turmeric, chilli powder, and other spices; saute for 30 seconds.",
@@ -1331,7 +1423,7 @@ class RecipeGenerator:
         if meal == "breakfast":
             return [
                 "Prep all ingredients and keep them ready.",
-                "Heat 1 tbsp oil or ghee in a pan.",
+                f"Heat 1 tbsp {cooking_fat} in a pan.",
                 "Cook the base ingredients for 2 to 3 minutes.",
                 "Add the main breakfast ingredient and cook until done.",
                 "Season lightly and serve immediately.",
@@ -1339,7 +1431,7 @@ class RecipeGenerator:
 
         return [
             "Prepare all ingredients before starting.",
-            "Heat 1 tbsp oil in a pan and add aromatics.",
+            f"Heat 1 tbsp {cooking_fat} in a pan and add aromatics.",
             "Add main ingredients and cook until done.",
             "Adjust seasoning and serve warm.",
         ]
@@ -1402,9 +1494,17 @@ class RecipeGenerator:
         extras: list[str] = []
 
         meal = preferences.meal_type.lower()
+        diet = normalize_diet_value(preferences.diet)
+        is_vegan = diet == "vegan"
 
         if meal == "dessert":
-            for item in ["sugar", "milk", "ghee"]:
+            dessert_basics = ["sugar"]
+            if is_vegan:
+                dessert_basics.append("coconut milk")
+            else:
+                dessert_basics.extend(["milk", "ghee"])
+
+            for item in dessert_basics:
                 if item not in ing:
                     extras.append(item)
             for opt in ["cardamom", "nuts"]:
@@ -1447,7 +1547,8 @@ class RecipeGenerator:
         if "weight loss" in goals:
             extras = [x for x in extras if x != "ghee"]
         if "high protein" in goals:
-            for item in ["paneer", "lentils"]:
+            protein_items = ["lentils", "tofu"] if is_vegan else ["paneer", "lentils"]
+            for item in protein_items:
                 if item not in ing and item not in extras:
                     extras.append(item)
 
@@ -1464,14 +1565,17 @@ class RecipeGenerator:
         extra_ingredients = normalize_text_list(forced_extras)
 
         rows = self._normalize_ingredient_rows([], input_ingredients, extra_ingredients)
+        rows, full_ingredients = self._apply_diet_to_rows(rows, normalize_text_list([row["ingredient"] for row in rows]), preferences)
         steps = self._normalize_steps([], preferences)
-        full_ingredients = normalize_text_list([row["ingredient"] for row in rows])
         matched_ingredients = [item for item in input_ingredients if item in set(full_ingredients)]
         missing_ingredients = [item for item in full_ingredients if item not in set(matched_ingredients)]
         measured_extras = self._build_extra_ingredient_strings(missing_ingredients, rows)
 
         return {
             "recipe_name": self._fallback_name(input_ingredients, preferences),
+            "diet": normalize_diet_value(preferences.diet),
+            "diet_label": diet_label_for_value(preferences.diet),
+            "available_ingredients": input_ingredients,
             "input_ingredients": input_ingredients,
             "matched_ingredients": matched_ingredients,
             "missing_ingredients": missing_ingredients,

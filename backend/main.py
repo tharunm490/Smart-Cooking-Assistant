@@ -24,7 +24,7 @@ from io import BytesIO
 from .clip_model import get_detector, ingredients_data
 from .config import PROJECT_DIR, settings
 from .db import get_db_connection
-from .recipe_generator import RecipeGenerator, RecipePreferences, parse_text_hint_to_ingredients
+from .recipe_generator import RecipeGenerator, RecipePreferences, parse_text_hint_to_ingredients, validate_diet_request
 from .tts_service import TTSService
 from .translation_service import translate_recipe
 from .utils import normalize_text_list
@@ -333,10 +333,14 @@ def generate_recipe(request: RecipeRequest, user: dict[str, Any] = Depends(get_c
         flattened_ingredients.extend(group)
 
     text_ingredients = parse_text_hint_to_ingredients(request.user_text, flattened_ingredients)
-    all_ingredients = request.ingredients + text_ingredients
+    available_ingredients = normalize_text_list(request.ingredients + text_ingredients)
 
-    if not all_ingredients and not request.user_text.strip():
+    if not available_ingredients and not request.user_text.strip():
         raise HTTPException(status_code=400, detail="Provide ingredients from image/text/voice before generating recipe.")
+
+    diet_error = validate_diet_request(request.diet, available_ingredients, request.user_text, request.dish_name)
+    if diet_error:
+        raise HTTPException(status_code=400, detail=diet_error)
 
     normalized_health_goals = _normalize_health_goals(request.health_goals)
     dish_name = request.dish_name.strip() or _infer_dish_name_from_text(request.user_text)
@@ -355,7 +359,7 @@ def generate_recipe(request: RecipeRequest, user: dict[str, Any] = Depends(get_c
 
     # Keep the dependency explicit for route-level auth enforcement.
     _ = user
-    recipe = recipe_generator.generate(all_ingredients, preferences)
+    recipe = recipe_generator.generate(available_ingredients, preferences)
 
     recipe = translate_recipe(recipe, request.language)
 

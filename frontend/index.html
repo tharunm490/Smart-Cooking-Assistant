@@ -265,6 +265,102 @@
         return Number.parseInt(dom.servings.value, 10) || 2;
     }
 
+    const DIET_LABELS = {
+        veg: "Veg",
+        "non-veg": "Non-Veg",
+        vegan: "Vegan",
+    };
+
+    const DIET_BLOCKLIST = {
+        veg: ["chicken", "fish", "mutton", "egg", "eggs", "prawn", "prawns", "crab", "meat", "beef", "pork", "lamb", "duck", "goat", "seafood"],
+        vegan: ["chicken", "fish", "mutton", "egg", "eggs", "prawn", "prawns", "crab", "meat", "beef", "pork", "lamb", "duck", "goat", "seafood", "milk", "curd", "paneer", "butter", "ghee", "cheese", "yogurt", "cream", "whey", "khoya"],
+    };
+
+    function normalizeDietValue(value) {
+        const normalized = String(value || "").trim().toLowerCase().replace(/_/g, "-");
+        if (normalized === "nonveg" || normalized === "non veg") {
+            return "non-veg";
+        }
+        if (normalized === "vegetarian") {
+            return "veg";
+        }
+        return normalized || "veg";
+    }
+
+    function getDietLabel(value) {
+        const normalized = normalizeDietValue(value);
+        return DIET_LABELS[normalized] || normalized.replace(/\b\w/g, (character) => character.toUpperCase());
+    }
+
+    function getDietBadgeClass(value) {
+        const normalized = normalizeDietValue(value);
+        if (normalized === "vegan") {
+            return "bg-[#eab308] text-black";
+        }
+        if (normalized === "non-veg") {
+            return "bg-[#ef4444] text-white";
+        }
+        return "bg-[#22c55e] text-white";
+    }
+
+    function showToast(message, kind = "error") {
+        let toastHost = document.getElementById("toast-host");
+        if (!toastHost) {
+            toastHost = document.createElement("div");
+            toastHost.id = "toast-host";
+            toastHost.className = "fixed right-5 top-5 z-[100] flex flex-col gap-3 pointer-events-none";
+            document.body.appendChild(toastHost);
+        }
+
+        const toast = document.createElement("div");
+        const isError = kind === "error";
+        toast.className = `pointer-events-auto max-w-md rounded-2xl border px-4 py-3 text-sm font-semibold shadow-2xl backdrop-blur-xl ${isError ? "border-red-500/40 bg-red-500/15 text-red-50" : "border-emerald-500/40 bg-emerald-500/15 text-emerald-50"}`;
+        toast.textContent = message;
+        toastHost.appendChild(toast);
+
+        window.setTimeout(() => {
+            toast.remove();
+        }, 3200);
+    }
+
+    function validateServingsSelection() {
+        if (dom.servings.value !== "custom") {
+            return true;
+        }
+        const parsed = Number.parseInt(dom.customServings.value, 10);
+        if (!Number.isFinite(parsed) || parsed < 1) {
+            showToast("Please enter a valid custom servings value.", "error");
+            return false;
+        }
+        return true;
+    }
+
+    function validateDietSelection() {
+        const diet = normalizeDietValue(dom.dietType.value);
+        const terms = DIET_BLOCKLIST[diet] || [];
+        if (!terms.length) {
+            return true;
+        }
+
+        const combinedText = [
+            state.detectedIngredients.map((item) => item.ingredient).join(" "),
+            dom.userText.value || "",
+            getDietLabel(dom.dietType.value),
+        ].join(" ").toLowerCase();
+
+        const hasConflict = terms.some((term) => new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(combinedText));
+        if (!hasConflict) {
+            return true;
+        }
+
+        const message = diet === "vegan"
+            ? "❌ Selected Vegan diet does not allow dairy or animal products."
+            : "❌ Selected diet is Veg, but requested dish contains Non-Veg ingredients. Please change diet preference.";
+        showToast(message, "error");
+        setStatus(message);
+        return false;
+    }
+
     function setStatus(message) {
         dom.status.textContent = message;
     }

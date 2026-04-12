@@ -395,6 +395,353 @@
         return Number.parseInt(dom.servings.value, 10) || 2;
     }
 
+    const DIET_LABELS = {
+        veg: "Veg",
+        "non-veg": "Non-Veg",
+        vegan: "Vegan",
+    };
+
+    const DIET_BLOCKLIST = {
+        veg: ["chicken", "fish", "mutton", "egg", "eggs", "prawn", "prawns", "crab", "meat", "beef", "pork", "lamb", "duck", "goat", "seafood"],
+        vegan: ["chicken", "fish", "mutton", "egg", "eggs", "prawn", "prawns", "crab", "meat", "beef", "pork", "lamb", "duck", "goat", "seafood", "milk", "curd", "paneer", "butter", "ghee", "cheese", "yogurt", "cream", "whey", "khoya"],
+    };
+
+    const REQUEST_INGREDIENT_MARKERS = [
+        "i have",
+        "i've got",
+        "have",
+        "got",
+        "using",
+        "with",
+        "ingredients",
+        "available",
+        "available ingredients",
+        "i have got",
+    ];
+
+    const REQUEST_DISH_SUFFIXES = new Set([
+        "curry",
+        "fry",
+        "fries",
+        "rice",
+        "kabab",
+        "kebab",
+        "masala",
+        "biryani",
+        "roast",
+        "gravy",
+        "salad",
+        "soup",
+        "sandwich",
+        "toast",
+        "wrap",
+        "roll",
+        "chutney",
+        "pakora",
+        "bhaji",
+        "tikka",
+        "cutlet",
+        "pulao",
+        "pulav",
+        "noodles",
+        "pasta",
+        "burger",
+        "pizza",
+        "dosa",
+        "idli",
+        "upma",
+        "khichdi",
+        "korma",
+        "stew",
+        "samosa",
+    ]);
+
+    const ALLOWED_HEALTH_GOALS = new Set([
+        "weight loss",
+        "high protein",
+        "diabetic friendly",
+        "low fat",
+        "heart healthy",
+    ]);
+
+    const INGREDIENT_ALIASES = {
+        tomatoes: "tomato",
+        onions: "onion",
+        chilies: "chilli",
+        chilis: "chilli",
+        peppers: "pepper",
+        potatoes: "potato",
+        eggs: "egg",
+        prawns: "prawn",
+        nuts: "nut",
+        leaves: "leaf",
+    };
+
+    const REQUEST_IGNORE_WORDS = new Set([
+        "a",
+        "an",
+        "and",
+        "any",
+        "approx",
+        "about",
+        "as",
+        "ask",
+        "be",
+        "bowl",
+        "can",
+        "cook",
+        "dish",
+        "do",
+        "for",
+        "from",
+        "grams",
+        "how",
+        "in",
+        "ingredient",
+        "ingredients",
+        "into",
+        "make",
+        "meal",
+        "meals",
+        "my",
+        "of",
+        "oil",
+        "on",
+        "or",
+        "please",
+        "recipe",
+        "salt",
+        "sauce",
+        "serve",
+        "serving",
+        "servings",
+        "spice",
+        "spices",
+        "spoon",
+        "tbsp",
+        "tsp",
+        "the",
+        "to",
+        "tool",
+        "want",
+        "with",
+        "without",
+        "what",
+        "would",
+        "you",
+    ]);
+
+    function normalizeDietValue(value) {
+        const normalized = String(value || "").trim().toLowerCase().replace(/_/g, "-");
+        if (normalized === "nonveg" || normalized === "non veg") {
+            return "non-veg";
+        }
+        if (normalized === "vegetarian") {
+            return "veg";
+        }
+        return normalized || "veg";
+    }
+
+    function getDietLabel(value) {
+        const normalized = normalizeDietValue(value);
+        return DIET_LABELS[normalized] || normalized.replace(/\b\w/g, (character) => character.toUpperCase());
+    }
+
+    function getDietBadgeClass(value) {
+        const normalized = normalizeDietValue(value);
+        if (normalized === "vegan") {
+            return "bg-[#eab308] text-black";
+        }
+        if (normalized === "non-veg") {
+            return "bg-[#ef4444] text-white";
+        }
+        return "bg-[#22c55e] text-white";
+    }
+
+    function normalizeIngredientName(value) {
+        const base = String(value || "")
+            .toLowerCase()
+            .replace(/[()\[\]{}.,;:!?]/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+        if (!base) {
+            return "";
+        }
+
+        return base
+            .split(" ")
+            .map((word) => {
+                if (INGREDIENT_ALIASES[word]) {
+                    return INGREDIENT_ALIASES[word];
+                }
+                if (word.endsWith("ies") && word.length > 3) {
+                    return `${word.slice(0, -3)}y`;
+                }
+                if (word.endsWith("s") && word.length > 3 && !word.endsWith("ss")) {
+                    return word.slice(0, -1);
+                }
+                return word;
+            })
+            .join(" ")
+            .trim();
+    }
+
+    function extractExplicitUserIngredients(text) {
+        const value = String(text || "").trim();
+        if (!value) {
+            return [];
+        }
+
+        const lowered = value.toLowerCase();
+        const markerIndex = REQUEST_INGREDIENT_MARKERS
+            .map((marker) => lowered.indexOf(marker))
+            .filter((index) => index >= 0)
+            .sort((left, right) => left - right)[0];
+
+        if (markerIndex === undefined) {
+            return [];
+        }
+
+        let segment = value.slice(markerIndex);
+        const firstMarker = REQUEST_INGREDIENT_MARKERS.find((marker) => segment.toLowerCase().startsWith(marker));
+        if (firstMarker) {
+            segment = segment.slice(firstMarker.length);
+        }
+
+        return segment
+            .split(/(?:,|\n|\band\b|\bplus\b|&|\/)/i)
+            .map((part) => part.trim())
+            .map((part) => part.replace(/^[:\-\s]+/, ""))
+            .map((part) => part.replace(/\b(?:about|around|roughly|approx(?:\.|imately)?|nearly|some|little|few|a|an|the)\b/gi, ""))
+            .map((part) => part.replace(/\b(?:with|using|have|got|available|ingredients?)\b/gi, ""))
+            .map((part) => part.replace(/\s+/g, " ").trim())
+            .filter(Boolean)
+            .map((part) => {
+                const words = part.split(" ").filter(Boolean);
+                if (words.length > 1) {
+                    const lastWord = words[words.length - 1].toLowerCase();
+                    if (REQUEST_DISH_SUFFIXES.has(lastWord)) {
+                        words.pop();
+                    }
+                }
+                return words.join(" ").trim();
+            })
+            .map(normalizeIngredientName)
+            .filter((item, index, items) => Boolean(item) && items.indexOf(item) === index && !REQUEST_IGNORE_WORDS.has(item));
+    }
+
+    function getAvailableIngredients() {
+        const ingredients = state.detectedIngredients.map((item) => normalizeIngredientName(item.ingredient));
+        const explicitIngredients = extractExplicitUserIngredients(dom.userText.value);
+        return Array.from(new Set([...ingredients, ...explicitIngredients].filter(Boolean)));
+    }
+
+    function ingredientMatchesAvailability(ingredient, availableIngredients) {
+        const normalizedIngredient = normalizeIngredientName(ingredient);
+        if (!normalizedIngredient) {
+            return false;
+        }
+
+        return availableIngredients.some((available) => {
+            if (!available) {
+                return false;
+            }
+            if (normalizedIngredient === available) {
+                return true;
+            }
+            return normalizedIngredient.includes(available) || available.includes(normalizedIngredient);
+        });
+    }
+
+    function getRecipeIngredientRows(recipe) {
+        if (Array.isArray(recipe?.ingredients_with_measurements) && recipe.ingredients_with_measurements.length) {
+            return recipe.ingredients_with_measurements.map((item) => ({
+                ingredient: String(item.ingredient || "").trim(),
+                measurement: String(item.measurement || "").trim(),
+            }));
+        }
+
+        if (Array.isArray(recipe?.ingredients)) {
+            return recipe.ingredients.map((item) => ({
+                ingredient: String(item || "").trim(),
+                measurement: "",
+            }));
+        }
+
+        return [];
+    }
+
+    function getDietConflictMessage(diet) {
+        return diet === "vegan"
+            ? "❌ Selected Vegan diet does not allow dairy or animal products."
+            : "❌ Selected diet is Veg, but requested dish contains Non-Veg ingredients. Please change diet preference.";
+    }
+
+    function validateHealthGoalsSelection() {
+        const invalidGoals = getHealthGoals().filter((goal) => !ALLOWED_HEALTH_GOALS.has(goal));
+        if (!invalidGoals.length) {
+            return true;
+        }
+
+        showToast(`Invalid health goal selection: ${invalidGoals.join(", ")}.`, "error");
+        return false;
+    }
+
+    function showToast(message, kind = "error") {
+        let toastHost = document.getElementById("toast-host");
+        if (!toastHost) {
+            toastHost = document.createElement("div");
+            toastHost.id = "toast-host";
+            toastHost.className = "fixed right-5 top-5 z-[100] flex flex-col gap-3 pointer-events-none";
+            document.body.appendChild(toastHost);
+        }
+
+        const toast = document.createElement("div");
+        const isError = kind === "error";
+        toast.className = `pointer-events-auto max-w-md rounded-2xl border px-4 py-3 text-sm font-semibold shadow-2xl backdrop-blur-xl ${isError ? "border-red-500/40 bg-red-500/15 text-red-50" : "border-emerald-500/40 bg-emerald-500/15 text-emerald-50"}`;
+        toast.textContent = message;
+        toastHost.appendChild(toast);
+
+        window.setTimeout(() => {
+            toast.remove();
+        }, 3200);
+    }
+
+    function validateServingsSelection() {
+        if (dom.servings.value !== "custom") {
+            return true;
+        }
+        const parsed = Number.parseInt(dom.customServings.value, 10);
+        if (!Number.isFinite(parsed) || parsed < 1) {
+            showToast("Please enter a valid custom servings value.", "error");
+            return false;
+        }
+        return true;
+    }
+
+    function validateDietSelection() {
+        const diet = normalizeDietValue(dom.dietType.value);
+        if (diet === "non-veg") {
+            return true;
+        }
+
+        const terms = DIET_BLOCKLIST[diet] || [];
+        const combinedText = [
+            state.detectedIngredients.map((item) => item.ingredient).join(" "),
+            dom.userText.value || "",
+        ].join(" ").toLowerCase();
+
+        const hasConflict = terms.some((term) => new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(combinedText));
+        if (!hasConflict) {
+            return true;
+        }
+
+        const message = getDietConflictMessage(diet);
+        showToast(message, "error");
+        setStatus(message);
+        return false;
+    }
+
     function setStatus(message) {
         dom.status.textContent = message;
     }
@@ -638,26 +985,18 @@
         }
 
         const recipe = state.recipe;
-        const normalizeIngredient = (value) => String(value || "").trim().toLowerCase();
-        const measuredRows = (recipe.ingredients_with_measurements || []).map((item) => ({
-            ingredient: normalizeIngredient(item.ingredient),
-            measurement: String(item.measurement || "").trim(),
-        }));
-        const matchedIngredients = (recipe.matched_ingredients || [])
-            .map((item) => normalizeIngredient(item))
-            .filter(Boolean);
-        const missingSet = new Set((recipe.missing_ingredients || []).map((item) => normalizeIngredient(item)));
+        const availableIngredients = getAvailableIngredients();
+        const ingredientRows = getRecipeIngredientRows(recipe);
+        const matchedRows = ingredientRows.filter((item) => ingredientMatchesAvailability(item.ingredient, availableIngredients));
+        const missingRows = ingredientRows.filter((item) => !ingredientMatchesAvailability(item.ingredient, availableIngredients));
 
-        const ingredientsHtml = (recipe.ingredients_with_measurements || [])
-            .map((item) => `<li>${item.measurement} ${item.ingredient}</li>`)
+        const ingredientsHtml = ingredientRows
+            .map((item) => `<li>${item.measurement ? `${item.measurement} ` : ""}${item.ingredient}</li>`)
             .join("");
-        const matchedHtml = matchedIngredients.map((item) => `<li>✔ ${item}</li>`).join("");
-        const measuredMissingHtml = measuredRows
-            .filter((item) => missingSet.has(item.ingredient))
-            .map((item) => `<li>${item.ingredient} - ${item.measurement || "as needed"}</li>`)
+        const matchedHtml = matchedRows.map((item) => `<li>✔ ${item.ingredient}</li>`).join("");
+        const extraHtml = missingRows
+            .map((item) => `<li>${item.ingredient}${item.measurement ? ` - ${item.measurement}` : " - as needed"}</li>`)
             .join("");
-        const fallbackExtraHtml = (recipe.extra_ingredients || []).map((item) => `<li>${item}</li>`).join("");
-        const extraHtml = measuredMissingHtml || fallbackExtraHtml;
         const stepsHtml = (recipe.steps || []).map((step) => `<li>${step}</li>`).join("");
         const source = recipe.generation_source || recipe.source || "unknown";
         const sourceLabel = source.startsWith("dataset")
@@ -667,13 +1006,18 @@
                 : source === "fallback"
                     ? "Safe Fallback"
                     : source;
+        const dietLabel = getDietLabel(recipe.diet || dom.dietType.value);
+        const dietBadgeClass = getDietBadgeClass(recipe.diet || dom.dietType.value);
         const healthGoals = getHealthGoals();
         const healthOptimizationHtml = healthGoals.length > 0 
             ? `<div class="p-3 mt-3 rounded-xl bg-genz-green/15 border border-genz-green/30"><p class="text-xs text-genz-green font-bold">✓ Health Optimized For: ${healthGoals.map(g => g.charAt(0).toUpperCase() + g.slice(1)).join(", ")}</p></div>`
             : "";
 
         dom.recipeOutput.innerHTML = `
-            <h4 class="text-lg font-black">${recipe.recipe_name || "Recipe"}</h4>
+            <div class="flex flex-wrap items-center gap-2">
+                <h4 class="text-lg font-black">${recipe.recipe_name || "Recipe"}</h4>
+                <span class="inline-flex items-center rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-[0.15em] ${dietBadgeClass}">${dietLabel}</span>
+            </div>
             <p class="text-sm text-white/60">${recipe.cooking_time || "--"} • ${recipe.servings || "--"} servings • ${recipe.meal_type || "--"}</p>
             <p class="text-xs mt-1 text-genz-teal font-bold">Source: ${sourceLabel}</p>
             ${healthOptimizationHtml}
@@ -842,7 +1186,7 @@
             diet: dom.dietType.value,
             spice_level: dom.spiceLevel.value,
             age_group: dom.ageGroup.value,
-            health_goals: getHealthGoals(),
+            health_goals: Array.from(new Set(getHealthGoals())),
             servings: getServings(),
             language: dom.language.value,
             user_text: dom.userText.value.trim()
@@ -850,8 +1194,23 @@
 
         if (!payload.ingredients.length && !payload.user_text) {
             setStatus("Upload images or provide text/voice input first.");
+            showToast("Upload images or provide text/voice input first.", "error");
             return;
         }
+
+        if (!validateServingsSelection()) {
+            return;
+        }
+
+        if (!validateHealthGoalsSelection()) {
+            return;
+        }
+
+        if (!validateDietSelection()) {
+            return;
+        }
+
+        const availableIngredients = getAvailableIngredients();
 
         state.isGeneratingRecipe = true;
         setButtonBusy(dom.generateButton, true, "Generating...", "Generate Recipe");
@@ -860,7 +1219,11 @@
             const response = await fetch(`${API_BASE}/generate-recipe`, {
                 method: "POST",
                 headers: authHeaders(true),
-                body: JSON.stringify(payload)
+                body: JSON.stringify({
+                    ...payload,
+                    available_ingredients: availableIngredients,
+                    requested_text: dom.userText.value.trim(),
+                })
             });
             if (response.status === 401) {
                 localStorage.removeItem("sca_token");
@@ -1013,6 +1376,7 @@
             await detectIngredients();
         } catch (error) {
             setStatus(error.message);
+            showToast(error.message, "error");
         }
     });
 
@@ -1024,6 +1388,7 @@
             await generateRecipe();
         } catch (error) {
             setStatus(error.message);
+            showToast(error.message, "error");
         }
     });
 
@@ -1032,6 +1397,7 @@
             await generateVoice();
         } catch (error) {
             setStatus(error.message);
+            showToast(error.message, "error");
         }
     });
 
