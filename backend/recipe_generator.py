@@ -715,7 +715,12 @@ class RecipeGenerator:
         scored.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
         return scored[0][3]
 
-    def _find_dataset_row(self, dish_name: str, input_ingredients: list[str], preferences: RecipePreferences) -> tuple[dict[str, str] | None, str]:
+    def _find_dataset_row(
+        self,
+        dish_name: str,
+        input_ingredients: list[str],
+        preferences: RecipePreferences | None = None,
+    ) -> tuple[dict[str, str] | None, str]:
         """PHASE 3-7: Find best recipe from dataset using 9-phase pipeline.
         
         Phases:
@@ -729,6 +734,8 @@ class RecipeGenerator:
         """
         if not dish_name.strip() or not self.dataset_rows:
             return None, "none"
+
+        preferences = preferences or RecipePreferences()
 
         # PHASE 1: Parse user query intent
         raw_query = re.sub(r"\s+", " ", dish_name.strip().lower())
