@@ -1,0 +1,179 @@
+SMART COOKING ASSISTANT - CI TESTING WORKFLOW (SIMPLE EXPLANATION)
+
+This file explains what GitHub Actions CI is doing in simple words.
+
+------------------------------------------------------------
+1) WHEN CI RUNS
+------------------------------------------------------------
+CI runs automatically when:
+- code is pushed to main branch
+- a pull request is opened/updated targeting main
+
+Workflow file used:
+- .github/workflows/ci.yml
+
+------------------------------------------------------------
+2) OVERALL CI FLOW
+------------------------------------------------------------
+The pipeline has 4 main jobs:
+1. Backend Unit + AI + Security + Performance tests
+2. FastAPI API tests
+3. DB + Integration tests (with MySQL service)
+4. Frontend tests (Jest)
+
+Each job does this pattern:
+- checkout code
+- install runtime (Python or Node)
+- install dependencies
+- run tests
+- save report as artifact
+
+------------------------------------------------------------
+3) BACKEND UNIT / AI / SECURITY / PERFORMANCE JOB
+------------------------------------------------------------
+Job name: Backend Unit, AI, Security, Performance
+
+What it runs:
+- pytest backend/tests -m "unit or ai or security or performance"
+
+Important command detail:
+- mkdir -p reports
+  This creates a reports folder before test output is written.
+
+Report generated:
+- reports/backend-tests.html
+
+What each backend test file checks:
+
+A) backend/tests/test_recipe_logic.py (unit)
+- query parsing logic
+- dataset matching picks relevant recipe
+- extra ingredient detection (example: salt/oil as missing when not provided)
+- health-goal adjustment logic (example: diabetic removes sugar)
+- nutrition values are valid
+- diet validation blocks wrong diet requests
+- matched/missing ingredient post-processing correctness
+
+B) backend/tests/test_ai_output_validation.py (ai)
+- AI/dataset output relevance (example: choose Tomato Bath, not unrelated Bath)
+- health-goal note appears in output
+- translation hook behavior for multilingual recipe name
+
+C) backend/tests/test_security.py (security)
+- blocks invalid login and SQL-injection-like payloads
+- rejects invalid/non-image upload types
+- confirms password is stored as hash (not plain text)
+
+D) backend/tests/test_performance.py (performance)
+- ingredient detection responds under time limit
+- recipe generation responds under time limit
+- voice generation responds under time limit
+
+E) backend/tests/test_tts_service.py (unit)
+- TTS service creates MP3 output path and URL properly
+
+------------------------------------------------------------
+4) FASTAPI API TEST JOB
+------------------------------------------------------------
+Job name: FastAPI API Tests
+
+What it runs:
+- pytest backend/tests/api -m "api"
+
+Report generated:
+- reports/api-tests.html
+
+Main coverage:
+- signup and login endpoints
+- detect-ingredients endpoint
+- generate-recipe endpoint
+- save-recipe endpoint
+- text-to-speech endpoint
+- my-recipes/history endpoint
+
+Test file:
+- backend/tests/api/test_api_endpoints.py
+
+------------------------------------------------------------
+5) DB + INTEGRATION JOB (WITH MYSQL)
+------------------------------------------------------------
+Job name: DB and Integration Tests
+
+Extra service started in CI:
+- MySQL 8 container (as GitHub Actions service)
+
+Environment used in this job:
+- RUN_DB_TESTS=1
+- DB_HOST=127.0.0.1
+- DB_USER=root
+- DB_PASSWORD=rootpass
+- DB_NAME=smart_cooking_assistant_test
+
+What it runs:
+- pytest backend/tests/integration -m "db or integration"
+
+Report generated:
+- reports/db-integration-tests.html
+
+Main coverage:
+
+A) backend/tests/integration/test_db_integration.py (db)
+- creates/uses DB schema tables
+- inserts and verifies user records
+- inserts login history
+- verifies recipes and uploaded image records persist
+
+B) backend/tests/integration/test_full_workflow.py (integration)
+- end-to-end flow:
+  signup -> login -> upload image -> detect ingredients -> generate recipe -> save recipe -> generate voice -> fetch recipe history
+
+------------------------------------------------------------
+6) FRONTEND TEST JOB
+------------------------------------------------------------
+Job name: Frontend Tests
+
+What it runs:
+- npm install (inside frontend folder)
+- npm test -- --json --outputFile=../reports/frontend-tests.json
+
+Reports generated:
+- reports/frontend-tests.json
+- frontend/coverage
+
+Frontend test files and meaning:
+
+A) frontend/src/tests/auth_forms.test.js
+- checks login/signup HTML contains required form fields and validation text
+
+B) frontend/src/tests/app_ui_logic.test.js
+- checks main script includes important UI functions:
+  preview render, delete image, clear/reset, recipe render, audio render
+
+C) frontend/src/tests/app_dom_smoke.test.js
+- smoke test for app.js in a test DOM
+- ensures app loads without crash
+- ensures New Recipe reset keeps UI stable
+
+------------------------------------------------------------
+7) ARTIFACTS (WHAT YOU CAN DOWNLOAD FROM CI)
+------------------------------------------------------------
+GitHub Actions uploads these artifacts:
+- backend-test-report (HTML)
+- api-test-report (HTML)
+- db-integration-test-report (HTML)
+- frontend-test-report (JSON + coverage)
+
+These help you inspect failures and show proof of testing.
+
+------------------------------------------------------------
+8) SIMPLE SUMMARY
+------------------------------------------------------------
+In simple words, CI confirms:
+- core backend logic is correct
+- API endpoints work
+- DB integration works with MySQL
+- full user flow works end-to-end
+- frontend structure and basic UI behavior are safe
+- performance and security checks are included
+
+So every push/PR gets automatic quality checks before merge/deploy.

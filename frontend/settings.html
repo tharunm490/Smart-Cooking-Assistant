@@ -35,6 +35,10 @@
             <label>Confirm Password</label>
             <input id="confirm-password" type="password" />
           </div>
+          <div class="field-inline" style="display:flex; align-items:center; gap:8px; margin-top:6px;">
+            <input id="show-passwords" type="checkbox" style="width:16px; height:16px;" />
+            <label for="show-passwords" style="margin:0; cursor:pointer;">Show passwords</label>
+          </div>
           <button class="btn btn-primary" id="update-password-btn" type="button" style="margin-top:12px;">Update Password</button>
           <div class="status" id="status"></div>
         </div>
@@ -54,10 +58,22 @@
     const statusEl = document.getElementById("status");
     function setStatus(msg){ statusEl.textContent = msg; }
 
+    const currentPasswordEl = document.getElementById("current-password");
+    const newPasswordEl = document.getElementById("new-password");
+    const confirmPasswordEl = document.getElementById("confirm-password");
+    const showPasswordsEl = document.getElementById("show-passwords");
+
+    showPasswordsEl.addEventListener("change", () => {
+      const inputType = showPasswordsEl.checked ? "text" : "password";
+      currentPasswordEl.type = inputType;
+      newPasswordEl.type = inputType;
+      confirmPasswordEl.type = inputType;
+    });
+
     document.getElementById("update-password-btn").addEventListener("click", async ()=>{
-      const currentPassword = document.getElementById("current-password").value.trim();
-      const newPassword = document.getElementById("new-password").value.trim();
-      const confirmPassword = document.getElementById("confirm-password").value.trim();
+      const currentPassword = currentPasswordEl.value.trim();
+      const newPassword = newPasswordEl.value.trim();
+      const confirmPassword = confirmPasswordEl.value.trim();
       if(!currentPassword || !newPassword || !confirmPassword){ setStatus("All fields are required."); return; }
       if(newPassword !== confirmPassword){ setStatus("New password and confirm password must match."); return; }
       try{
@@ -69,6 +85,14 @@
         const data = await response.json();
         if(!response.ok){ throw new Error(data.detail || "Failed to update password."); }
         setStatus("Password updated successfully.");
+        window.alert("Password updated successfully.");
+        currentPasswordEl.value = "";
+        newPasswordEl.value = "";
+        confirmPasswordEl.value = "";
+        showPasswordsEl.checked = false;
+        currentPasswordEl.type = "password";
+        newPasswordEl.type = "password";
+        confirmPasswordEl.type = "password";
       }catch(error){
         setStatus(error.message || "Unable to update password.");
       }

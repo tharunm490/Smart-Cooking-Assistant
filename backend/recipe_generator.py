@@ -300,8 +300,31 @@ class RecipePreferences:
 
 class RecipeGenerator:
     def __init__(self) -> None:
-        self.client = InferenceClient(model=settings.recipe_model_name, token=settings.hf_token)
+        self.client = InferenceClient(
+            model=settings.recipe_model_name,
+            token=settings.hf_token,
+            timeout=settings.recipe_model_timeout_seconds,
+        )
         self.dataset_rows = self._load_dataset_rows()
+
+    def _build_fast_prompt(self, ingredients: list[str], preferences: RecipePreferences) -> str:
+        clean_ingredients = normalize_text_list(ingredients)
+        requested_dish = self._extract_user_dish_query(preferences) or "none"
+        health = ", ".join(preferences.health_goals) if preferences.health_goals else "none"
+        return (
+            "Generate an Indian recipe as strict JSON only.\n"
+            f"Available ingredients: {', '.join(clean_ingredients) if clean_ingredients else 'none'}\n"
+            f"Requested dish: {requested_dish}\n"
+            f"Meal type: {preferences.meal_type}\n"
+            f"Diet: {diet_label_for_value(preferences.diet)}\n"
+            f"Health goals: {health}\n"
+            f"Servings: {preferences.servings}\n"
+            "Rules: use only available ingredients as on-hand; do not assume salt/oil/spices are available; keep diet-compliant; "
+            "extra ingredients must be listed as missing/extra_ingredients with measurements.\n"
+            "Required keys: recipe_name,diet,diet_label,available_ingredients,input_ingredients,matched_ingredients,missing_ingredients,"
+            "extra_ingredients,ingredients_with_measurements,steps,cooking_time,servings,nutrition.\n"
+            "nutrition keys: calories,protein,carbs,fat.\n"
+        )
 
     def _load_dataset_rows(self) -> list[dict[str, str]]:
         dataset_path = PROJECT_DIR / "Cleaned_Indian_Food_Dataset.csv"
@@ -1009,6 +1032,9 @@ class RecipeGenerator:
         }
 
     def build_prompt(self, ingredients: list[str], preferences: RecipePreferences) -> str:
+        if settings.recipe_model_fast_prompt:
+            return self._build_fast_prompt(ingredients, preferences)
+
         clean_ingredients = normalize_text_list(ingredients)
         requested_dish = self._extract_user_dish_query(preferences) or "none"
         prompt = (PROMPT_TEMPLATE.format(
@@ -1043,8 +1069,8 @@ class RecipeGenerator:
             try:
                 response = self.client.chat_completion(
                     messages=[{"role": "user", "content": prompt}],
-                    temperature=0.3,
-                    max_tokens=800,
+                    temperature=settings.recipe_model_temperature,
+                    max_tokens=settings.recipe_model_max_tokens,
                 )
 
                 payload_text = self._extract_chat_content(response)

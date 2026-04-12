@@ -1,0 +1,47 @@
+version: "3.8"
+
+services:
+  mysql:
+    image: mysql:8
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: yourpassword
+      MYSQL_DATABASE: smart_cooking_assistant
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - mysql
+    environment:
+      DB_HOST: mysql
+      DB_USER: root
+      DB_PASSWORD: yourpassword
+      DB_NAME: smart_cooking_assistant
+      JWT_SECRET_KEY: your_secret_key_here
+      HF_TOKEN: ${HF_TOKEN:-}
+      USE_MODEL: "false"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/generated_audio:/app/backend/generated_audio
+      - ./uploaded_images:/app/uploaded_images
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+
+volumes:
+  mysql_data:
