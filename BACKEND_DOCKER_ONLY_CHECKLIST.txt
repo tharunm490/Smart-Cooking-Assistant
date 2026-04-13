@@ -1,0 +1,47 @@
+SMART COOKING ASSISTANT - BACKEND ONLY (DOCKER)
+
+Use this when you want to run only backend + MySQL, without frontend.
+
+1) Build backend image only
+
+docker compose build --no-cache backend
+
+2) Start only MySQL + backend
+
+docker compose up mysql backend
+
+3) Check running containers
+
+docker compose ps
+
+You should see:
+- smartcookingassistant-mysql
+- smartcookingassistant-backend
+
+4) Verify backend health
+
+Open in browser:
+http://localhost:8000/
+
+Expected response:
+{"status":"ok","message":"Smart Cooking Assistant API is running."}
+
+5) Check backend logs (if any issue)
+
+docker compose logs backend --tail=100
+
+6) Check MySQL logs (if DB issue)
+
+docker compose logs mysql --tail=100
+
+7) Stop backend-only stack
+
+docker compose down
+
+Optional: run in background
+
+docker compose up -d mysql backend
+
+Then view logs live:
+
+docker compose logs -f backend

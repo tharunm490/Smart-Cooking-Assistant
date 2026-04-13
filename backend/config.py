@@ -61,7 +61,7 @@ class Settings:
     clip_model_name: str = "openai/clip-vit-base-patch32"
     recipe_model_name: str = "Qwen/Qwen2.5-7B-Instruct"
     recipe_model_timeout_seconds: float = float(os.getenv("RECIPE_MODEL_TIMEOUT_SECONDS", "12"))
-    recipe_model_max_tokens: int = int(os.getenv("RECIPE_MODEL_MAX_TOKENS", "420"))
+    recipe_model_max_tokens: int = int(os.getenv("RECIPE_MODEL_MAX_TOKENS", "900"))
     recipe_model_temperature: float = float(os.getenv("RECIPE_MODEL_TEMPERATURE", "0.2"))
     recipe_model_fast_prompt: bool = _env_bool("RECIPE_MODEL_FAST_PROMPT", True)
     use_model: bool = _env_bool("USE_MODEL", False)

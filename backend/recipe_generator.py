@@ -1066,18 +1066,22 @@ class RecipeGenerator:
 
         if settings.hf_token:
             prompt = self.build_prompt(prompt_ingredients, preferences)
-            try:
-                response = self.client.chat_completion(
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=settings.recipe_model_temperature,
-                    max_tokens=settings.recipe_model_max_tokens,
-                )
+            candidate_max_tokens = [settings.recipe_model_max_tokens, max(settings.recipe_model_max_tokens, 900)]
+            for max_tokens in dict.fromkeys(candidate_max_tokens):
+                try:
+                    response = self.client.chat_completion(
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=settings.recipe_model_temperature,
+                        max_tokens=max_tokens,
+                    )
 
-                payload_text = self._extract_chat_content(response)
-                if payload_text:
+                    payload_text = self._extract_chat_content(response)
+                    if not payload_text:
+                        continue
+
                     return self._normalize_recipe_payload(payload_text, clean_ingredients, auto_extras, preferences)
-            except Exception:
-                pass
+                except Exception:
+                    continue
 
         return self._fallback_recipe(clean_ingredients, auto_extras, preferences)
 
@@ -1108,11 +1112,8 @@ class RecipeGenerator:
         forced_extras: list[str],
         preferences: RecipePreferences,
     ) -> dict[str, Any]:
-        try:
-            parsed = extract_json_object(payload)
-            return self._post_process(parsed, ingredients, forced_extras, preferences)
-        except Exception:
-            return self._fallback_recipe(ingredients, forced_extras, preferences)
+        parsed = extract_json_object(payload)
+        return self._post_process(parsed, ingredients, forced_extras, preferences)
 
     def _post_process(
         self,

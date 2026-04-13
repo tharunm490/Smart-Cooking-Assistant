@@ -28,7 +28,20 @@ def extract_json_object(text: str) -> dict[str, Any]:
     if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
         cleaned = cleaned[first_brace : last_brace + 1]
 
-    return json.loads(cleaned)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        repaired = cleaned
+        # Remove trailing commas before object/array close.
+        repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
+        # Quote bare numeric values that include units (for example: 20g, 450kcal).
+        repaired = re.sub(
+            r'(:\s*)([-+]?\d+(?:\.\d+)?)\s*(kcal|g|mg|ml|minutes?|hours?|hrs?)\b(?=\s*[,}\]])',
+            r'\1"\2 \3"',
+            repaired,
+            flags=re.IGNORECASE,
+        )
+        return json.loads(repaired)
 
 
 def normalize_text_list(values: list[str]) -> list[str]:
